@@ -11,6 +11,9 @@
 #include "net.h"
 #include "jbod.h"
 
+
+// TAs Himashveta, Ashwin, Nimay, and Mustafa have guided me to debug this, and understand the logic behind this
+
 /* the client socket descriptor for the connection to the server */
 int cli_sd = -1;
 
@@ -20,36 +23,40 @@ bool nread(int fd, int len, uint8_t *buf)
 {
 
   int total_read = 0; // Total bytes read so far
-  int bytes_read = 0; // Bytes read in a single `read` call
+  int bytes_read = 0; // Bytes read in a read call
 
+
+  // Loop until the total number of bytes read = requested length 
   while (total_read < len)
   {
     bytes_read = read(fd, buf + total_read, len - total_read);
 
+    // Handle errors occurs while reading
     if (bytes_read < 0)
     {
-      // If an error occurs during `read`, handle it
+      // Handle interruption by a signal
       if (errno == EINTR)
       {
-        // Interrupted by signal, retry
         continue;
       }
       else
       {
-        // Any other error
+        // Any other forms of error
         printf("Error in read");
         return false;
       }
     }
+
+    // Reached EOF (end of file)
     else if (bytes_read == 0)
     {
-      // EOF (End of file), unexpected during network communication
       break;
     }
 
     total_read += bytes_read;
   }
 
+  // Returns true/false, as per the condition
   return total_read == len;
 }
 
@@ -60,27 +67,29 @@ bool nwrite(int fd, int len, uint8_t *buf)
   int remaining = len; // Bytes left to write
   uint8_t *ptr = buf;  // Pointer to the current position in the buffer
 
+  // Loop until all bytes are written
   while (remaining > 0)
   {
     int bytes_written = write(fd, ptr, remaining);
 
     if (bytes_written > 0)
     {
-      // Successfully wrote some bytes
-      remaining -= bytes_written;
-      ptr += bytes_written;
+      // Updating the variables
+      remaining -= bytes_written;     // Decreasing the remaining bytes to be written
+      ptr += bytes_written;           // Moving the pointer forward by amount of bytes written
     }
+
+    // Handle errors occurs while reading
     else if (bytes_written < 0)
     {
-      // Handle errors
+      // Handle interruption by a signal
       if (errno == EINTR)
       {
-        // Interrupted system call, retry writing here
         continue;
       }
       else
       {
-        // Other errors
+        // Any other forms of error
         printf("Error in write");
         return false;
       }
@@ -95,22 +104,34 @@ bool nwrite(int fd, int len, uint8_t *buf)
 bool recv_packet(int fd, uint32_t *op, uint8_t *ret, uint8_t *block)
 {
 
-  uint8_t header[5]; // Opcode (4 bytes) + Info Code (1 byte)
+  // Buffer for the packet header: opcode (4 bytes) + info code (1 byte)
+  uint8_t header[5];
 
+  // Read the packet header from the file descriptor
+  // Reading the header failed
   if (nread(fd, HEADER_LEN, header) == false)
   {
     printf("Failed to read packet header");
     return false;
   }
 
+
+  // Store the opcode in network byte order
   uint32_t network_op;
+
+  // Memcpy opcode from the header buffer into the network_op 
   memcpy(&network_op, header, sizeof(network_op));
+  
+  // Opcode converted from network byte to host byte (network to host)
   *op = ntohl(network_op);
+
+  // Extract the info code from the 5th byte of the header
   *ret = header[4];
 
+  // If second lowest bit of info code indicates a block
   if ((*ret & 0x02) && block != NULL)
   {
-    // Second lowest bit of info code indicates a block
+    // Data block present, read it from the file descriptor into the block buffer
     if (nread(fd, JBOD_BLOCK_SIZE, block) == false)
     {
       printf("Failed to read data block.");
@@ -126,20 +147,27 @@ bool recv_packet(int fd, uint32_t *op, uint8_t *ret, uint8_t *block)
  * failure */
 bool send_packet(int fd, uint32_t op, uint8_t *block)
 {
-  uint8_t header[5]; // Opcode (4 bytes) + Info Code (1 byte)
+  // Buffer for the packet header: opcode (4 bytes) + info code (1 byte)
+  uint8_t header[5]; 
 
+  // Convert the opcode op from host byte order to network byte order
   uint32_t network_op = htonl(op);
+
+  // Copy the network-order opcode into the header buffer
   memcpy(header, &network_op, sizeof(network_op));
 
-  // We need to set the second lowest bit of the code if op is a write operation
+  // Info code set to the 5th byte of the header
+  // If the opcode represents a write operation, set the second lowest bit of the code to 1
   header[4] = ((op >> 12) == JBOD_WRITE_BLOCK) ? 0x02 : 0x00;
 
+  // Header sent to the file descriptor using nwrite
   if (nwrite(fd, HEADER_LEN, header) == false)
   {
     printf("Failed to send packet header.");
     return false;
   }
 
+  // Check if the operation is a write block operation
   if ((op >> 12) == JBOD_WRITE_BLOCK)
   {
     if (nwrite(fd, JBOD_BLOCK_SIZE, block) == false)
@@ -165,12 +193,14 @@ bool jbod_connect(const char *ip, uint16_t port)
     return false;
   }
 
-  // Set up the server address structure
+  // Set up the server address structure to 0
   struct sockaddr_in server_addr;
   memset(&server_addr, 0, sizeof(server_addr));
+
   server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(JBOD_PORT); // CHANGED HERE   // ask whether we can just write 'port' here
-  // printf("Setting up the server address structure in jbod_connect");
+
+  // Convert the given port number to network byte order
+  server_addr.sin_port = htons(JBOD_PORT); 
 
   // Convert IP address from string to binary
   if (inet_aton(ip, &server_addr.sin_addr) <= 0)
@@ -181,8 +211,7 @@ bool jbod_connect(const char *ip, uint16_t port)
     return false;
   }
 
-  // printf("Connection %d \n", cli_sd);
-  // Connect to the server
+  // Attempt to connect to the JBOD server
   if (connect(cli_sd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
   {
     printf("HERE %d \n", connect(cli_sd, (struct sockaddr *)&server_addr, sizeof(server_addr)));
@@ -191,7 +220,7 @@ bool jbod_connect(const char *ip, uint16_t port)
     cli_sd = -1;
     return false;
   }
-  // printf("BCA\n");
+
   return true;
 }
 
@@ -202,15 +231,14 @@ void jbod_disconnect(void)
   {
     // Close the socket
     close(cli_sd);
-    cli_sd = -1; // Reset the client socket descriptor
+
+    // Reset the client socket descriptor
+    cli_sd = -1; 
   }
 }
 
 int jbod_client_operation(uint32_t op, uint8_t *block)
 {
-
-  // some changes needed
-
   // To receive the response packet
   uint32_t received_op;
   uint8_t info_code;
@@ -244,12 +272,11 @@ int jbod_client_operation(uint32_t op, uint8_t *block)
     return -1;
   }
 
-  // Handle data block (if present
+  // Handle data block (if present)
   if ((info_code & 0x02) && block != NULL)
   {
     memcpy(block, buffer, JBOD_BLOCK_SIZE);
   }
-
 
   // Return the result (lowest bit of the info code)
   return (info_code & 0x01) ? -1 : 0;
