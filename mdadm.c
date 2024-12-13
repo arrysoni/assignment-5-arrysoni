@@ -8,8 +8,9 @@
 #include "cache.h"
 #include "jbod.h"
 #include "mdadm.h"
-#include "net.h"
+#include "net.h"        // Added by me 
 
+// I had different variables for these, but changed my code as per the provided code here
 int is_mounted = 0;
 int is_written = 0;
 
